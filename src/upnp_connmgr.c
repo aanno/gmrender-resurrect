@@ -308,6 +308,28 @@ static void connmgr_filter_mime_type_root(const mime_type_filters_t* mime_filter
 	}
 }
 
+static const char *snapcast_formats = NULL;
+
+void connmgr_set_snapcast_formats(const char *formats) {
+	snapcast_formats = formats;
+}
+
+// Snapcast entries go first: some controllers rank resources by the order of
+// the renderer's SinkProtocolInfo, and these should be preferred over http-get.
+static void append_snapcast_protocol_info(GString *protoInfo) {
+	if (snapcast_formats == NULL || *snapcast_formats == '\0')
+		return;
+	gchar **formats = g_strsplit(snapcast_formats, ",", -1);
+	for (gchar **f = formats; *f != NULL; f++) {
+		gchar *format = g_strstrip(*f);
+		if (*format == '\0')
+			continue;
+		Log_info("connmgr", "Registering support for snapcast '%s'", format);
+		g_string_append_printf(protoInfo, "snapcast:*:%s:*,", format);
+	}
+	g_strfreev(formats);
+}
+
 int connmgr_init(const char* mime_filter_string) {
 
 	struct service *srv = upnp_connmgr_get_service();
@@ -325,6 +347,7 @@ int connmgr_init(const char* mime_filter_string) {
 	g_slist_foreach(mime_filter.removed_types, g_remove_mime_type, NULL);
 
 	GString* protoInfo = g_string_new(NULL);
+	append_snapcast_protocol_info(protoInfo);
 	for (GSList* entry = supported_types_list; entry != NULL; entry = g_slist_next(entry))
 	{
 		Log_info("connmgr", "Registering support for '%s'", (const char*) entry->data);
