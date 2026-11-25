@@ -314,8 +314,10 @@ void connmgr_set_snapcast_formats(const char *formats) {
 	snapcast_formats = formats;
 }
 
-// Snapcast entries go first: some controllers rank resources by the order of
-// the renderer's SinkProtocolInfo, and these should be preferred over http-get.
+// Snapcast session entries go first: some controllers rank resources by the
+// order of the renderer's SinkProtocolInfo. They are http-get resources with a
+// MIME type of their own, since controllers (BubbleUPnP) don't pass on other
+// protocols.
 static void append_snapcast_protocol_info(GString *protoInfo) {
 	if (snapcast_formats == NULL || *snapcast_formats == '\0')
 		return;
@@ -324,8 +326,8 @@ static void append_snapcast_protocol_info(GString *protoInfo) {
 		gchar *format = g_strstrip(*f);
 		if (*format == '\0')
 			continue;
-		Log_info("connmgr", "Registering support for snapcast '%s'", format);
-		g_string_append_printf(protoInfo, "snapcast:*:%s:*,", format);
+		Log_info("connmgr", "Registering support for snapcast sessions '%s'", format);
+		g_string_append_printf(protoInfo, "http-get:*:%s:*,", format);
 	}
 	g_strfreev(formats);
 }

@@ -111,8 +111,8 @@ static GOptionEntry option_entries[] = {
 	  "Filter the supported media types. "
 		"e.g. Audio only: '--mime-filter audio'. Disable FLAC: '--mime-filter -audio/x-flac'.", NULL },
 	{ "snapcast-formats", 0, 0, G_OPTION_ARG_STRING, &snapcast_formats,
-	  "Advertise Snapcast streams of these content formats first "
-		"(PoC), e.g. '--snapcast-formats audio/flac,audio/L16'.", NULL },
+	  "Advertise Snapcast sessions of these MIME types first "
+		"(PoC), e.g. '--snapcast-formats audio/x-snapcast'.", NULL },
 	{ "logfile", 0, 0, G_OPTION_ARG_STRING, &log_file,
 	  "Debug log filename. Use 'stdout' or 'stderr' to log to console.", NULL },
 	{ "list-outputs", 0, 0, G_OPTION_ARG_NONE, &show_outputs,
