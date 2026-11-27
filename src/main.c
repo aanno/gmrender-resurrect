@@ -55,6 +55,7 @@
 #include "git-version.h"
 #include "logging.h"
 #include "output.h"
+#include "snapcast_session.h"
 #include "upnp_service.h"
 #include "upnp_control.h"
 #include "upnp_device.h"
@@ -84,7 +85,7 @@ static const gchar *output = NULL;
 static const gchar *pid_file = NULL;
 static const gchar *log_file = NULL;
 static const gchar *mime_filter = NULL;
-static const gchar *snapcast_formats = NULL;
+static gboolean snapcast_sessions = FALSE;
 
 /* Generic GMediaRender options */
 static GOptionEntry option_entries[] = {
@@ -110,9 +111,10 @@ static GOptionEntry option_entries[] = {
 	{ "mime-filter", 0, 0, G_OPTION_ARG_STRING, &mime_filter,
 	  "Filter the supported media types. "
 		"e.g. Audio only: '--mime-filter audio'. Disable FLAC: '--mime-filter -audio/x-flac'.", NULL },
-	{ "snapcast-formats", 0, 0, G_OPTION_ARG_STRING, &snapcast_formats,
-	  "Advertise Snapcast sessions of these MIME types first "
-		"(PoC), e.g. '--snapcast-formats audio/x-snapcast'.", NULL },
+	{ "snapcast-sessions", 0, 0, G_OPTION_ARG_NONE, &snapcast_sessions,
+	  "Play a Snapcast session instead of the media when the media server "
+		"offers one (asked with 'Accept: audio/x-snapcast-tcp'; needs "
+		"GStreamer's snapsrc). PoC.", NULL },
 	{ "logfile", 0, 0, G_OPTION_ARG_STRING, &log_file,
 	  "Debug log filename. Use 'stdout' or 'stderr' to log to console.", NULL },
 	{ "list-outputs", 0, 0, G_OPTION_ARG_NONE, &show_outputs,
@@ -284,7 +286,7 @@ int main(int argc, char **argv)
 		fclose(pid_file_stream);
 	}
 
-	connmgr_set_snapcast_formats(snapcast_formats);
+	snapcast_session_enable(snapcast_sessions);
 	upnp_renderer = upnp_renderer_descriptor(friendly_name, uuid, mime_filter);
 	if (upnp_renderer == NULL) {
 		return EXIT_FAILURE;

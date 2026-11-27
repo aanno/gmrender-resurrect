@@ -37,6 +37,7 @@
 
 #include "logging.h"
 #include "output_module.h"
+#include "snapcast_session.h"
 #ifdef HAVE_GST
 #include "output_gstreamer.h"
 #endif
@@ -147,14 +148,20 @@ int output_add_options(GOptionContext *ctx)
 	return 0;
 }
 
+// A Snapcast session offered for uri replaces it (snapcast_session.h); the
+// transport state keeps showing the controller's uri.
 void output_set_uri(const char *uri, output_update_meta_cb_t meta_cb) {
 	if (output_module && output_module->set_uri) {
-		output_module->set_uri(uri, meta_cb);
+		char *session = snapcast_session_resolve(uri);
+		output_module->set_uri(session ? session : uri, meta_cb);
+		g_free(session);
 	}
 }
 void output_set_next_uri(const char *uri) {
 	if (output_module && output_module->set_next_uri) {
-		output_module->set_next_uri(uri);
+		char *session = snapcast_session_resolve(uri);
+		output_module->set_next_uri(session ? session : uri);
+		g_free(session);
 	}
 }
 

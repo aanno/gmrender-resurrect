@@ -35,11 +35,6 @@ typedef struct mime_type_filters_t
 
 struct service *upnp_connmgr_get_service(void);
 int connmgr_init(const char* mime_filter);
-// MIME types of Snapcast sessions (comma separated, e.g. "audio/x-snapcast") to
-// advertise as "http-get:*:<type>:*", before all other entries, so that
-// controllers prefer them. Call before connmgr_init(). PoC, see
-// gstreamer-snapcast-rs docs/dlna.md.
-void connmgr_set_snapcast_formats(const char *formats);
 
 void register_mime_type(const char *mime_type);
 
