@@ -32,6 +32,10 @@
 enum PlayFeedback {
 	PLAY_STOPPED,
 	PLAY_STARTED_NEXT_STREAM,
+	// A Snapcast session was paused or resumed elsewhere (another room or a
+	// Snapcast controller); PoC, see snapcast_session.h.
+	PLAY_PAUSED,
+	PLAY_RESUMED,
 };
 typedef void (*output_transition_cb_t)(enum PlayFeedback);
 

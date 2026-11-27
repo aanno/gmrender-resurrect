@@ -137,6 +137,106 @@ struct track_time_info {
 };
 static struct track_time_info last_known_time_ = {0, 0};
 
+/* Snapcast sessions (PoC, gstreamer-snapcast-rs docs/dlna.md): when the URI is a
+ * snapcast-tcp:// session (see snapcast_session.h), snapsrc plays it, and the
+ * session is shared by every room playing it. So Pause and Seek become commands
+ * to the session (snapsrc's "stream-control" action signal) instead of pausing
+ * or seeking playbin, which keeps playing (snapsrc outputs silence while the
+ * session is paused). Position, duration and the playback state come from the
+ * session (snapsrc's "snapcast-session" bus messages). The volume is this
+ * room's volume on the Snapcast server ("set-server-volume"), which snapsrc
+ * applies; playbin stays at full volume. Stop leaves the session. */
+static const char kSessionScheme[] = "snapcast-tcp://";
+static struct {
+	char playback[16];      // "playing", "paused", "stopped" or ""
+	double position_s;      // -1: unknown
+	double duration_s;      // -1: unknown
+	gint64 position_at_us;  // g_get_monotonic_time() of position_s
+	int seen_playing;       // reached "playing" since it was set
+} session_;
+static char *player_uri_ = NULL;     // the URI playbin got last (strdup()ed)
+static double local_volume_ = 1.0;   // playbin's volume outside sessions
+static int local_mute_ = 0;
+
+static int is_session_uri(const char *uri) {
+	return uri != NULL && strncmp(uri, kSessionScheme,
+				      strlen(kSessionScheme)) == 0;
+}
+
+static int playing_session(void) {
+	return is_session_uri(player_uri_);
+}
+
+static void session_reset(void) {
+	session_.playback[0] = '\0';
+	session_.position_s = -1;
+	session_.duration_s = -1;
+	session_.position_at_us = 0;
+	session_.seen_playing = 0;
+}
+
+// playbin's source if it is snapsrc (unref it), else NULL.
+static GstElement *session_source(void) {
+	GstElement *src = NULL;
+	g_object_get(player_, "source", &src, NULL);
+	if (src != NULL && strcmp(G_OBJECT_TYPE_NAME(src), "GstSnapSrc") != 0) {
+		gst_object_unref(src);
+		src = NULL;
+	}
+	return src;
+}
+
+static int session_command(const char *command, const char *params) {
+	GstElement *src = session_source();
+	if (src == NULL) {
+		Log_error("snapcast", "%s: no snapsrc playing", command);
+		return -1;
+	}
+	gboolean ok = FALSE;
+	Log_info("snapcast", "Session command %s %s", command, params);
+	g_signal_emit_by_name(src, "stream-control", command, params, &ok);
+	gst_object_unref(src);
+	return ok ? 0 : -1;
+}
+
+// The control point's volume level (0..100) for an amplitude fraction: the
+// inverse of upnp_control.c's level -> decibel -> fraction mapping (-60 dB at 0,
+// -20 dB at 50, 0 dB at 100). A session's volume is a Snapcast percent, which
+// Snapweb shows too, so it gets the level the control point shows.
+static guint volume_level_of_fraction(double fraction) {
+	if (fraction <= 0) return 0;
+	const double db = 20 * log10(fraction);
+	double level;
+	if (db < -60) level = 0;
+	else if (db < -20) level = (db + 60) * 50 / 40;
+	else level = 50 + (db + 20) * 50 / 20;
+	if (level > 100) level = 100;
+	return (guint) (level + 0.5);
+}
+
+static void session_set_volume(void) {
+	GstElement *src = session_source();
+	if (src == NULL) return;
+	gboolean ok = FALSE;
+	guint percent = volume_level_of_fraction(local_volume_);
+	g_signal_emit_by_name(src, "set-server-volume", percent,
+			      (gboolean) local_mute_, &ok);
+	gst_object_unref(src);
+}
+
+// Sets playbin's URI (and remembers it, see playing_session()).
+static void set_player_uri(const char *uri) {
+	free(player_uri_);
+	player_uri_ = uri ? strdup(uri) : NULL;
+	session_reset();
+	// In a session, snapsrc applies this room's volume on the server.
+	g_object_set(G_OBJECT(player_), "volume",
+		     playing_session() ? 1.0 : local_volume_,
+		     "mute", playing_session() ? FALSE : (gboolean) local_mute_,
+		     NULL);
+	g_object_set(G_OBJECT(player_), "uri", uri, NULL);
+}
+
 static GstState get_current_player_state() {
 	GstState state = GST_STATE_PLAYING;
 	GstState pending = GST_STATE_NULL;
@@ -146,18 +246,30 @@ static GstState get_current_player_state() {
 
 static int output_gstreamer_play(output_transition_cb_t callback) {
 	play_trans_callback_ = callback;
+	if (playing_session() && gsuri_ && strcmp(gsuri_, player_uri_) == 0
+	    && get_current_player_state() == GST_STATE_PLAYING) {
+		// Resume the (paused) session; playbin is still playing.
+		return session_command("play", "");
+	}
 	if (get_current_player_state() != GST_STATE_PAUSED) {
 		if (gst_element_set_state(player_, GST_STATE_READY) ==
 		    GST_STATE_CHANGE_FAILURE) {
 			Log_error("gstreamer", "setting play state failed (1)");
 			// Error, but continue; can't get worse :)
 		}
-		g_object_set(G_OBJECT(player_), "uri", gsuri_, NULL);
+		set_player_uri(gsuri_);
 	}
 	if (gst_element_set_state(player_, GST_STATE_PLAYING) ==
 	    GST_STATE_CHANGE_FAILURE) {
 		Log_error("gstreamer", "setting play state failed (2)");
 		return -1;
+	}
+	if (playing_session()) {
+		// The control point's Play: start the session if it isn't playing
+		// (snapsrc queues the command until it is connected), and bring
+		// this room's volume along.
+		session_command("play", "");
+		session_set_volume();
 	}
 	return 0;
 }
@@ -172,6 +284,9 @@ static int output_gstreamer_stop(void) {
 }
 
 static int output_gstreamer_pause(void) {
+	if (playing_session()) {
+		return session_command("pause", "");
+	}
 	if (gst_element_set_state(player_, GST_STATE_PAUSED) ==
 	    GST_STATE_CHANGE_FAILURE) {
 		return -1;
@@ -181,6 +296,12 @@ static int output_gstreamer_pause(void) {
 }
 
 static int output_gstreamer_seek(gint64 position_nanos) {
+	if (playing_session()) {
+		char params[64];
+		g_snprintf(params, sizeof(params), "{\"position\":%.3f}",
+			   position_nanos / 1e9);
+		return session_command("setPosition", params);
+	}
 	if (gst_element_seek_simple(player_, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
 								position_nanos)) {
 		return 0;
@@ -302,6 +423,66 @@ static void MetaModify_add_tag(const GstTagList *list, const gchar *tag,
 	}
 }
 
+// The end of a track (EOS, or a session that stopped): the next URI, if any.
+static void handle_end_of_stream(void) {
+	if (gs_next_uri_ != NULL) {
+		// If playbin does not support gapless (old
+		// versions didn't), this will trigger.
+		free(gsuri_);
+		gsuri_ = gs_next_uri_;
+		gs_next_uri_ = NULL;
+		gst_element_set_state(player_, GST_STATE_READY);
+		set_player_uri(gsuri_);
+		gst_element_set_state(player_, GST_STATE_PLAYING);
+		if (playing_session()) {
+			session_command("play", "");
+		}
+		if (play_trans_callback_) {
+			play_trans_callback_(PLAY_STARTED_NEXT_STREAM);
+		}
+	} else {
+		if (playing_session()) {
+			// Leave the stopped session.
+			gst_element_set_state(player_, GST_STATE_READY);
+		}
+		if (play_trans_callback_) {
+			play_trans_callback_(PLAY_STOPPED);
+		}
+	}
+}
+
+// snapsrc's "snapcast-session" message: the session's state.
+static void handle_session_message(const GstStructure *s) {
+	if (!playing_session()) return;
+	const char *playback = gst_structure_get_string(s, "playback-status");
+	gdouble position = -1, duration = -1;
+	gst_structure_get_double(s, "position", &position);
+	gst_structure_get_double(s, "duration", &duration);
+	session_.position_s = position;
+	session_.position_at_us = g_get_monotonic_time();
+	session_.duration_s = duration;
+	if (playback == NULL || strcmp(playback, session_.playback) == 0)
+		return;
+	Log_info("snapcast", "Session %s -> %s",
+		 session_.playback[0] ? session_.playback : "(unknown)",
+		 playback);
+	const int was_playing = strcmp(session_.playback, "playing") == 0;
+	const int was_paused = strcmp(session_.playback, "paused") == 0;
+	g_strlcpy(session_.playback, playback, sizeof(session_.playback));
+	if (strcmp(playback, "playing") == 0) {
+		session_.seen_playing = 1;
+		if (was_paused && play_trans_callback_)
+			play_trans_callback_(PLAY_RESUMED);
+	} else if (strcmp(playback, "paused") == 0) {
+		if (was_playing && play_trans_callback_)
+			play_trans_callback_(PLAY_PAUSED);
+	} else if (strcmp(playback, "stopped") == 0 && session_.seen_playing) {
+		// The session's track ended: as EOS.
+		Log_info("snapcast", "Session ended");
+		handle_end_of_stream();
+	}
+}
+
 static gboolean my_bus_callback(GstBus * bus, GstMessage * msg,
 				gpointer data)
 {
@@ -319,22 +500,15 @@ static gboolean my_bus_callback(GstBus * bus, GstMessage * msg,
 	switch (msgType) {
 	case GST_MESSAGE_EOS:
 		Log_info("gstreamer", "%s: End-of-stream", msgSrcName);
-		if (gs_next_uri_ != NULL) {
-			// If playbin does not support gapless (old
-			// versions didn't), this will trigger.
-			free(gsuri_);
-			gsuri_ = gs_next_uri_;
-			gs_next_uri_ = NULL;
-			gst_element_set_state(player_, GST_STATE_READY);
-			g_object_set(G_OBJECT(player_), "uri", gsuri_, NULL);
-			gst_element_set_state(player_, GST_STATE_PLAYING);
-			if (play_trans_callback_) {
-				play_trans_callback_(PLAY_STARTED_NEXT_STREAM);
-			}
-		} else if (play_trans_callback_) {
-			play_trans_callback_(PLAY_STOPPED);
-		}
+		handle_end_of_stream();
 		break;
+
+	case GST_MESSAGE_ELEMENT: {
+		const GstStructure *s = gst_message_get_structure(msg);
+		if (s != NULL && gst_structure_has_name(s, "snapcast-session"))
+			handle_session_message(s);
+		break;
+	}
 
 	case GST_MESSAGE_ERROR: {
 		gchar *debug;
@@ -463,6 +637,20 @@ static int output_gstreamer_add_options(GOptionContext *ctx)
 
 static int output_gstreamer_get_position(gint64 *track_duration,
 					 gint64 *track_pos) {
+	if (playing_session()) {
+		// The session's, extrapolated while it plays (the sender
+		// reports whole seconds).
+		double pos = session_.position_s;
+		if (pos >= 0 && strcmp(session_.playback, "playing") == 0)
+			pos += (g_get_monotonic_time()
+				- session_.position_at_us) / 1e6;
+		if (session_.duration_s >= 0 && pos > session_.duration_s)
+			pos = session_.duration_s;
+		*track_duration = session_.duration_s >= 0
+			? (gint64) (session_.duration_s * 1e9) : 0;
+		*track_pos = pos >= 0 ? (gint64) (pos * 1e9) : 0;
+		return 0;
+	}
 	*track_duration = last_known_time_.duration;
 	*track_pos = last_known_time_.position;
 
@@ -492,26 +680,32 @@ static int output_gstreamer_get_position(gint64 *track_duration,
 }
 
 static int output_gstreamer_get_volume(float *v) {
-	double volume;
-	g_object_get(player_, "volume", &volume, NULL);
-	Log_info("gstreamer", "Query volume fraction: %f", volume);
-	*v = volume;
+	Log_info("gstreamer", "Query volume fraction: %f", local_volume_);
+	*v = local_volume_;
 	return 0;
 }
 static int output_gstreamer_set_volume(float value) {
 	Log_info("gstreamer", "Set volume fraction to %f", value);
-	g_object_set(player_, "volume", (double) value, NULL);
+	local_volume_ = value;
+	if (playing_session()) {
+		session_set_volume();  // this room's volume on the server
+	} else {
+		g_object_set(player_, "volume", (double) value, NULL);
+	}
 	return 0;
 }
 static int output_gstreamer_get_mute(int *m) {
-	gboolean val;
-	g_object_get(player_, "mute", &val, NULL);
-	*m = val;
+	*m = local_mute_;
 	return 0;
 }
 static int output_gstreamer_set_mute(int m) {
 	Log_info("gstreamer", "Set mute to %s", m ? "on" : "off");
-	g_object_set(player_, "mute", (gboolean) m, NULL);
+	local_mute_ = m;
+	if (playing_session()) {
+		session_set_volume();
+	} else {
+		g_object_set(player_, "mute", (gboolean) m, NULL);
+	}
 	return 0;
 }
 
@@ -525,7 +719,7 @@ static void prepare_next_stream(GstElement *obj, gpointer userdata) {
 	gsuri_ = gs_next_uri_;
 	gs_next_uri_ = NULL;
 	if (gsuri_ != NULL) {
-		g_object_set(G_OBJECT(player_), "uri", gsuri_, NULL);
+		set_player_uri(gsuri_);
 		if (play_trans_callback_) {
 			// TODO(hzeller): can we figure out when we _actually_
 			// start playing this ? there are probably a couple
@@ -540,6 +734,7 @@ static int output_gstreamer_init(void)
 	GstBus *bus;
 
 	SongMetaData_init(&song_meta_);
+	session_reset();
 	scan_mime_list();
 
 #if (GST_VERSION_MAJOR < 1)

@@ -778,6 +778,16 @@ static void inform_play_transition_from_output(enum PlayFeedback fb) {
 		replace_var(TRANSPORT_VAR_NEXT_AV_URI_META, "");
 		break;
 	}
+
+	case PLAY_PAUSED:
+		if (transport_state_ == TRANSPORT_PLAYING)
+			change_transport_state(TRANSPORT_PAUSED_PLAYBACK);
+		break;
+
+	case PLAY_RESUMED:
+		if (transport_state_ == TRANSPORT_PAUSED_PLAYBACK)
+			change_transport_state(TRANSPORT_PLAYING);
+		break;
 	}
 	service_unlock();
 }
