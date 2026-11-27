@@ -153,6 +153,8 @@ static struct {
 	double duration_s;      // -1: unknown
 	gint64 position_at_us;  // g_get_monotonic_time() of position_s
 	int seen_playing;       // reached "playing" since it was set
+	int sent_percent;       // the volume last sent (-1: none yet)
+	int sent_mute;
 } session_;
 static char *player_uri_ = NULL;     // the URI playbin got last (strdup()ed)
 static double local_volume_ = 1.0;   // playbin's volume outside sessions
@@ -173,6 +175,8 @@ static void session_reset(void) {
 	session_.duration_s = -1;
 	session_.position_at_us = 0;
 	session_.seen_playing = 0;
+	session_.sent_percent = -1;
+	session_.sent_mute = 0;
 }
 
 // playbin's source if it is snapsrc (unref it), else NULL.
@@ -215,15 +219,25 @@ static guint volume_level_of_fraction(double fraction) {
 }
 
 static void session_set_volume(void) {
+	guint percent = volume_level_of_fraction(local_volume_);
+	// A control point's SetVolume also sets the mute: send each change once.
+	if ((int) percent == session_.sent_percent
+	    && local_mute_ == session_.sent_mute)
+		return;
 	GstElement *src = session_source();
 	if (src == NULL) return;
 	gboolean ok = FALSE;
-	guint percent = volume_level_of_fraction(local_volume_);
 	g_signal_emit_by_name(src, "set-server-volume", percent,
 			      (gboolean) local_mute_, &ok);
 	gst_object_unref(src);
+	if (ok) {
+		session_.sent_percent = (int) percent;
+		session_.sent_mute = local_mute_;
+	}
+	// Not ok: no session right now; the next one gets it when it starts.
 	Log_info("snapcast", "Session volume %u %%%s: %s", percent,
-		 local_mute_ ? " (muted)" : "", ok ? "sent" : "refused");
+		 local_mute_ ? " (muted)" : "",
+		 ok ? "sent" : "kept for the next session");
 }
 
 // Sets playbin's URI (and remembers it, see playing_session()).
