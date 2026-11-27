@@ -2,10 +2,12 @@
  *
  * gstreamer-snapcast-rs, docs/dlna-snapcast-protocol.md: a media server offers
  * synchronized multiroom playback of an item as a Snapcast session, by content
- * negotiation on the item's ordinary http:// resource. Asked with
- * "Accept: audio/x-snapcast-tcp", it answers with that Content-Type and a
- * snapcast-tcp:// URI (one line); any other server answers with the media.
- * Playing the snapcast-tcp:// URI needs GStreamer's snapsrc element.
+ * negotiation on the item's ordinary http:// resource. Asked with an Accept
+ * header that lists Snapcast transports (e.g. "audio/x-snapcast-tcp"), it answers
+ * with one of them as Content-Type and the session's URI (one line, e.g.
+ * snapcast-tcp://...); any other server answers with the media. Only transports
+ * whose URI scheme an installed GStreamer source handles are asked for (snapsrc:
+ * snapcast-tcp).
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
