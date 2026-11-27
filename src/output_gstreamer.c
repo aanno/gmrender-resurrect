@@ -297,9 +297,13 @@ static int output_gstreamer_pause(void) {
 
 static int output_gstreamer_seek(gint64 position_nanos) {
 	if (playing_session()) {
+		// JSON needs a decimal point whatever the locale (a German
+		// one wrote "20,000", which isn't a number in JSON).
+		char number[G_ASCII_DTOSTR_BUF_SIZE];
+		g_ascii_formatd(number, sizeof(number), "%.3f",
+				position_nanos / 1e9);
 		char params[64];
-		g_snprintf(params, sizeof(params), "{\"position\":%.3f}",
-			   position_nanos / 1e9);
+		g_snprintf(params, sizeof(params), "{\"position\":%s}", number);
 		return session_command("setPosition", params);
 	}
 	if (gst_element_seek_simple(player_, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
