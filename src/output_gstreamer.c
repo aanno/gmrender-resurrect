@@ -222,6 +222,8 @@ static void session_set_volume(void) {
 	g_signal_emit_by_name(src, "set-server-volume", percent,
 			      (gboolean) local_mute_, &ok);
 	gst_object_unref(src);
+	Log_info("snapcast", "Session volume %u %%%s: %s", percent,
+		 local_mute_ ? " (muted)" : "", ok ? "sent" : "refused");
 }
 
 // Sets playbin's URI (and remembers it, see playing_session()).
