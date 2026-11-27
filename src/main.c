@@ -286,7 +286,6 @@ int main(int argc, char **argv)
 		fclose(pid_file_stream);
 	}
 
-	snapcast_session_enable(snapcast_sessions);
 	upnp_renderer = upnp_renderer_descriptor(friendly_name, uuid, mime_filter);
 	if (upnp_renderer == NULL) {
 		return EXIT_FAILURE;
@@ -298,6 +297,8 @@ int main(int argc, char **argv)
 			  "ERROR: Failed to initialize Output subsystem");
 		return EXIT_FAILURE;
 	}
+	// After output_init(): checks the GStreamer registry for snapsrc.
+	snapcast_session_enable(snapcast_sessions);
 
 	struct upnp_device *device;
 	if (listen_port != 0 &&

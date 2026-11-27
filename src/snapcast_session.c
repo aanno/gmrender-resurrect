@@ -76,9 +76,10 @@ static const char *playable_accept_header(void) {
 		Log_info("snapcast", "Asking servers for Snapcast sessions: "
 			 "Accept: %s", accept_header);
 	else
-		Log_error("snapcast", "--snapcast-sessions: no GStreamer source "
-			  "handles a Snapcast URI scheme (snapsrc installed?); "
-			  "playing media only");
+		Log_error("snapcast", "Warning: --snapcast-sessions is on, but no "
+			  "GStreamer source handles a Snapcast URI scheme "
+			  "(snapsrc not installed?), so sessions are never asked "
+			  "for; playing media only");
 	return *accept_header ? accept_header : NULL;
 }
 
@@ -94,8 +95,12 @@ static int transport_of_type(const char *value) {
 	return -1;
 }
 
+static const char *playable_accept_header(void);
+
 void snapcast_session_enable(int enable) {
 	enabled = enable;
+	if (enabled)
+		playable_accept_header();  // logs what will be asked for
 }
 
 // Sends one request for uri; returns the transport if the response is a 200

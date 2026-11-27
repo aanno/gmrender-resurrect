@@ -17,7 +17,9 @@
 #ifndef _SNAPCAST_SESSION_H
 #define _SNAPCAST_SESSION_H
 
-// Turn the negotiation on or off (off by default).
+// Turn the negotiation on or off (off by default). Call after GStreamer is
+// initialized: turning it on checks which Snapcast transports installed
+// GStreamer sources can play, and logs a warning if none (then it stays off).
 void snapcast_session_enable(int enable);
 
 // If enabled and uri is an http:// URL whose server offers a Snapcast session for
