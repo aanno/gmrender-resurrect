@@ -39,8 +39,12 @@ static const struct {
 	{ "snapcast-ws", "audio/x-snapcast-ws" },    // reserved: over WebSocket
 };
 #define N_TRANSPORTS (sizeof(transports) / sizeof(transports[0]))
-// Seconds for connecting and for each read.
-#define TIMEOUT_S 3
+// Seconds for connecting and for each read. The GET's answer comes once the
+// server has opened the session, which can take a while: dms starts a helper
+// that opens the file, maybe on a network share (5 s seen), and waits up to 10 s
+// for it. Giving up earlier makes this room play the media outside the session,
+// out of sync with the others (gstreamer-snapcast-rs DLNA tests, finding 9).
+#define TIMEOUT_S 15
 // Longest header or body line read.
 #define MAX_LINE 4096
 
@@ -228,7 +232,8 @@ char *snapcast_session_resolve(const char *uri_string) {
 				 uri_string);
 		} else {
 			Log_error("snapcast", "%s: offered a session, but "
-				  "answered '%s'", uri_string,
+				  "answered '%s'; playing the media itself, "
+				  "outside any session", uri_string,
 				  body ? body : "");
 			g_free(body);
 		}
