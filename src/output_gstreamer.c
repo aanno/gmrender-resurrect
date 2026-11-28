@@ -294,9 +294,12 @@ static int output_gstreamer_stop(void) {
 	if (gst_element_set_state(player_, GST_STATE_READY) ==
 	    GST_STATE_CHANGE_FAILURE) {
 		return -1;
-	} else {
-		return 0;
 	}
+	// This room left the session: forget its state, so that the position
+	// isn't extrapolated on while stopped. A Play joins it again.
+	if (playing_session())
+		session_reset();
+	return 0;
 }
 
 static int output_gstreamer_pause(void) {
